@@ -1,0 +1,11 @@
+# Steam Friend Adder - Steam IDs File
+# Add one Steam ID per line (17-digit numeric IDs)
+# Lines starting with # are treated as comments and will be skipped
+# Empty lines are also skipped
+
+# Example Steam IDs (these are not real):
+# 76561198012345678
+# 76561198087654321
+# 76561198098765432
+
+# Add your Steam IDs below:
