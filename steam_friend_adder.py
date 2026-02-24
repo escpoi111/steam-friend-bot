@@ -10,6 +10,7 @@ Platform: Windows (but compatible with other platforms)
 """
 
 import os
+import re
 import sys
 import time
 import logging
@@ -38,6 +39,7 @@ class SteamFriendAdder:
     STEAM_COMMUNITY_BASE = "https://steamcommunity.com"
     FRIEND_LIST_ENDPOINT = "ISteamUser/GetFriendList/v1"
     PLAYER_SUMMARIES_ENDPOINT = "ISteamUser/GetPlayerSummaries/v2"
+    CHAT_INVITE_INFO_ENDPOINT = "ISteamChatRoomService/GetInviteLinkInfo/v1"
     
     def __init__(self, api_key: str, steam_id: str, log_file: str = "friend_adder.log"):
         """
@@ -615,6 +617,245 @@ class SteamFriendAdder:
 
         return results
 
+    def get_chat_invite_info(self, invite_url_or_code: str) -> Tuple[bool, dict, str]:
+        """
+        Resolve a Steam chat invite link to get chat group information.
+
+        Tries the ISteamChatRoomService/GetInviteLinkInfo Steam Web API first.
+        If the response includes a 'clan_steamid', the chat group is linked to a
+        Steam Community Group and its members can be fetched via the XML API.
+        Falls back to fetching the invite page HTML to extract the group name
+        and provide a clear error message when the API is unavailable.
+
+        Args:
+            invite_url_or_code: Full invite URL
+                (https://steamcommunity.com/chat/invite/<code>)
+                or just the invite code (e.g. ZiMUFTC2).
+
+        Returns:
+            Tuple[bool, dict, str]: (success, info_dict, error_message)
+            The info_dict may contain: chat_group_id, group_name,
+            active_member_count, clan_steamid (if linked to a Community Group).
+        """
+        raw = invite_url_or_code.strip()
+
+        # Extract invite code from full URL if provided
+        if "steamcommunity.com/chat/invite/" in raw:
+            invite_code = raw.split("/chat/invite/")[-1].strip("/")
+        else:
+            invite_code = raw.strip("/")
+
+        invite_url = f"{self.STEAM_COMMUNITY_BASE}/chat/invite/{invite_code}"
+        self.logger.info(f"Resolving Steam chat invite: {invite_url}")
+
+        try:
+            self._rate_limit_check()
+
+            # Attempt Steam Web API for invite info
+            api_url = f"{self.STEAM_API_BASE}/{self.CHAT_INVITE_INFO_ENDPOINT}"
+            params = {"key": self.api_key, "invite_code": invite_code}
+            api_response = requests.get(api_url, params=params, timeout=10)
+
+            if api_response.status_code == 200:
+                try:
+                    data = api_response.json()
+                    info = data.get("response", {})
+                    if info and (info.get("chat_group_id") or info.get("group_name")):
+                        self.logger.info(
+                            f"Chat invite resolved via API: {info.get('group_name', invite_code)}"
+                        )
+                        return True, info, ""
+                except ValueError:
+                    pass
+
+            # Fallback: fetch the invite page to extract the group name
+            self._rate_limit_check()
+            page_response = requests.get(
+                invite_url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SteamFriendBot/1.0)"},
+            )
+
+            if page_response.status_code == 404:
+                return False, {}, (
+                    f"Chat invite link not found (404). The invite code '{invite_code}' "
+                    f"may be invalid or expired."
+                )
+
+            if page_response.status_code == 200:
+                title_match = re.search(
+                    r"<title>([^<]+)</title>", page_response.text, re.IGNORECASE
+                )
+                group_name = title_match.group(1).strip() if title_match else invite_code
+                # Remove trailing " - Steam" or " – Steam" suffix (hyphen or en-dash)
+                group_name = re.sub(
+                    r"\s*[-\u2013]\s*Steam\s*$", "", group_name, flags=re.IGNORECASE
+                ).strip()
+
+                return False, {"group_name": group_name, "invite_code": invite_code}, (
+                    f"Steam chat group '{group_name}' found via invite link, but "
+                    f"retrieving the member list requires full Steam authentication "
+                    f"(username + password + Steam Guard). The Steam Chat API does not "
+                    f"expose member lists without login credentials.\n\n"
+                    f"Solutions:\n"
+                    f"  \u2022 If this chat is linked to a Steam Community Group, use Mode 3\n"
+                    f"    with the community group URL (steamcommunity.com/groups/<name>)\n"
+                    f"    or its numeric Group ID.\n"
+                    f"  \u2022 For pure Steam Chat groups, full Steam authentication is needed.\n"
+                    f"    See README section 'Steam Chat vs Community Group' for details."
+                )
+
+            return False, {}, (
+                f"Could not resolve invite link '{invite_url}' "
+                f"(HTTP {page_response.status_code}). "
+                f"Verify the invite code is valid and not expired."
+            )
+
+        except requests.exceptions.Timeout:
+            return False, {}, "Request timeout while resolving chat invite"
+        except requests.exceptions.RequestException as e:
+            return False, {}, f"Network error: {str(e)}"
+        except Exception as e:
+            return False, {}, f"Error resolving chat invite: {str(e)}"
+
+    def get_chat_members(self, invite_url_or_code: str) -> Tuple[bool, List[str], str]:
+        """
+        Get members of a Steam chat group via an invite link.
+
+        If the chat group is linked to a Steam Community Group (clan), members
+        are fetched using the Community Group XML API (same as Mode 3).
+        Otherwise returns a clear error explaining the authentication requirement.
+
+        Args:
+            invite_url_or_code: Full invite URL or invite code.
+
+        Returns:
+            Tuple[bool, List[str], str]: (success, list_of_member_steam_ids, error_message)
+        """
+        success, info, error = self.get_chat_invite_info(invite_url_or_code)
+
+        if not success:
+            return False, [], error
+
+        # If the chat group is linked to a Community Group, use the XML API
+        clan_steamid = info.get("clan_steamid") or info.get("clanid")
+        if clan_steamid and str(clan_steamid) not in ("", "0"):
+            self.logger.info(
+                f"Chat group is linked to Community Group "
+                f"(clan SteamID64: {clan_steamid}). "
+                f"Fetching members via Community Group XML API..."
+            )
+            return self.get_group_members(str(clan_steamid))
+
+        # Not linked to a Community Group — full auth required
+        group_name = info.get("group_name", "Unknown")
+        chat_group_id = info.get("chat_group_id", "Unknown")
+        active_count = info.get("active_member_count", "unknown")
+
+        return False, [], (
+            f"Chat group '{group_name}' (ID: {chat_group_id}) found with "
+            f"{active_count} active members, but this group is not linked to a "
+            f"Steam Community Group.\n\n"
+            f"Full Steam authentication is required to retrieve members of a "
+            f"private chat group. The Steam Web API does not expose a public "
+            f"endpoint for this.\n\n"
+            f"To add members from this chat group:\n"
+            f"  1. Install the steam library: pip install steam\n"
+            f"  2. Use SteamClient to authenticate and enumerate the chat room\n"
+            f"  3. Collect member SteamIDs and add them via Mode 1 (file mode)\n"
+            f"  See README section 'Steam Chat vs Community Group' for details."
+        )
+
+    def add_chat_members(self, invite_url_or_code: str) -> dict:
+        """
+        Send friend requests to all members of a Steam chat group.
+
+        Resolves the invite link, fetches the member list (requires the group
+        to be linked to a Community Group), skips existing friends and self,
+        then attempts a friend request for each remaining member.
+
+        Args:
+            invite_url_or_code: Full invite URL or invite code.
+
+        Returns:
+            dict: Summary of results with counts of success, failures, etc.
+        """
+        self.logger.info("=" * 60)
+        self.logger.info(f"ADDING FRIENDS FROM CHAT GROUP: {invite_url_or_code}")
+        self.logger.info("=" * 60)
+
+        success, member_ids, error = self.get_chat_members(invite_url_or_code)
+
+        if not success:
+            self.logger.error(error)
+            return {"error": error}
+
+        if not member_ids:
+            self.logger.info("No members found in this chat group.")
+            return {"total": 0, "success": 0, "failed": 0, "invalid": 0, "skipped": 0}
+
+        self.logger.info(f"Chat group has {len(member_ids)} members total")
+
+        # Exclude yourself
+        member_ids = [mid for mid in member_ids if mid != self.steam_id]
+
+        # Skip existing friends
+        self.logger.info("Retrieving your current friend list...")
+        friend_success, your_friends, friend_error = self.get_friend_list(self.steam_id)
+        if friend_success:
+            your_friends_set = set(your_friends)
+            self.logger.info(
+                f"You already have {len(your_friends_set)} friends - they will be skipped"
+            )
+        else:
+            self.logger.warning(
+                f"Could not retrieve your friend list: {friend_error}. "
+                f"Proceeding without skip check."
+            )
+            your_friends_set = set()
+
+        to_add = [mid for mid in member_ids if mid not in your_friends_set]
+
+        if not to_add:
+            self.logger.info(
+                "No new members to add (you are already friends with all chat group members)."
+            )
+            return {"total": 0, "success": 0, "failed": 0, "invalid": 0, "skipped": 0}
+
+        results = {"total": 0, "success": 0, "failed": 0, "invalid": 0, "skipped": 0}
+
+        self.logger.info(f"Processing {len(to_add)} new chat group members...")
+        self.logger.info("=" * 60)
+
+        for i, member_id in enumerate(to_add, 1):
+            results["total"] += 1
+            self.logger.info(f"Processing member {i}/{len(to_add)}: {member_id}")
+
+            success_req, message = self.send_friend_request(member_id)
+
+            if success_req:
+                results["success"] += 1
+                self.logger.info(f"✓ SUCCESS: {message}")
+            else:
+                if "Validation failed" in message:
+                    results["invalid"] += 1
+                    self.logger.error(f"✗ INVALID: {message}")
+                else:
+                    results["failed"] += 1
+                    self.logger.error(f"✗ FAILED: {message}")
+
+            time.sleep(1)
+
+        self.logger.info("=" * 60)
+        self.logger.info("SUMMARY:")
+        self.logger.info(f"  Total processed: {results['total']}")
+        self.logger.info(f"  Successful: {results['success']}")
+        self.logger.info(f"  Failed: {results['failed']}")
+        self.logger.info(f"  Invalid IDs: {results['invalid']}")
+        self.logger.info("=" * 60)
+
+        return results
+
 
 def load_config() -> Tuple[str, str]:
     """
@@ -667,10 +908,11 @@ def main():
     print("\nChoose operation mode:")
     print("1. Add friends from a file (steam_ids.txt)")
     print("2. Add all friends of a specific user (mutual friends)")
-    print("3. Add all members of a Steam group")
+    print("3. Add all members of a Steam Community group")
+    print("4. Add all members of a Steam Chat group (via invite link)")
     print()
 
-    mode = input("Enter your choice (1, 2, or 3): ").strip()
+    mode = input("Enter your choice (1, 2, 3, or 4): ").strip()
 
     if mode == "2":
         # Mutual friends mode
@@ -694,22 +936,65 @@ def main():
             sys.exit(1)
 
     elif mode == "3":
-        # Group members mode - NEW FEATURE
-        print("\n--- ADD STEAM GROUP MEMBERS MODE ---")
+        # Community group members mode
+        print("\n--- ADD STEAM COMMUNITY GROUP MEMBERS MODE ---")
         print("This will add all members of a Steam Community group who are not already your friends.")
         print("You can provide the group URL name (e.g. 'valve') or the numeric Group ID.")
+        print()
+        print("NOTE: This mode is for Steam Community Groups")
+        print("      (steamcommunity.com/groups/<name>).")
+        print("      For Steam Chat invite links, use Mode 4 instead.")
         print()
 
         group_id = input("Enter the Steam group URL name or Group ID: ").strip()
 
-        if not group_id:
-            print("\n❌ Error: Group identifier is required!")
+        # Detect chat invite URL entered by mistake and redirect gracefully
+        if "chat/invite" in group_id:
+            print(
+                "\n⚠️  Detected a Steam Chat invite link. "
+                "Switching to Chat Members mode (Mode 4)..."
+            )
+            print()
+            results = adder.add_chat_members(group_id)
+        else:
+            if not group_id:
+                print("\n❌ Error: Group identifier is required!")
+                sys.exit(1)
+
+            print()
+            results = adder.add_group_members(group_id)
+
+        if "error" not in results:
+            print(f"\n✓ Processing complete! Check {adder.log_file} for detailed logs.")
+        else:
+            print(f"\n❌ Error: {results['error']}")
+            sys.exit(1)
+
+    elif mode == "4":
+        # Steam Chat group members mode - NEW FEATURE
+        print("\n--- ADD STEAM CHAT GROUP MEMBERS MODE ---")
+        print("This will add all members of a Steam Chat group who are not already your friends.")
+        print()
+        print("Accepted inputs:")
+        print("  • Full invite URL: https://steamcommunity.com/chat/invite/<code>")
+        print("  • Just the invite code, e.g.: ZiMUFTC2")
+        print()
+        print("IMPORTANT: If the chat group is linked to a Steam Community Group,")
+        print("  members are fetched via the Community Group XML API (no extra auth needed).")
+        print("  If it is a private-only chat group, full Steam authentication is required.")
+        print("  See README section 'Steam Chat vs Community Group' for details.")
+        print()
+
+        chat_input = input("Enter chat invite URL or code: ").strip()
+
+        if not chat_input:
+            print("\n❌ Error: Chat invite link or code is required!")
             sys.exit(1)
 
         print()
-        results = adder.add_group_members(group_id)
+        results = adder.add_chat_members(chat_input)
 
-        if 'error' not in results:
+        if "error" not in results:
             print(f"\n✓ Processing complete! Check {adder.log_file} for detailed logs.")
         else:
             print(f"\n❌ Error: {results['error']}")
