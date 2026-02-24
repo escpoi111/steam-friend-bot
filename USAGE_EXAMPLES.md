@@ -33,8 +33,9 @@ python steam_friend_adder.py
 Choose operation mode:
 1. Add friends from a file (steam_ids.txt)
 2. Add all friends of a specific user (mutual friends)
+3. Add all members of a Steam group
 
-Enter your choice (1 or 2): 1
+Enter your choice (1, 2, or 3): 1
 
 --- FILE MODE ---
 Default input file: steam_ids.txt
@@ -85,8 +86,9 @@ python steam_friend_adder.py
 Choose operation mode:
 1. Add friends from a file (steam_ids.txt)
 2. Add all friends of a specific user (mutual friends)
+3. Add all members of a Steam group
 
-Enter your choice (1 or 2): 2
+Enter your choice (1, 2, or 3): 2
 
 --- ADD MUTUAL FRIENDS MODE ---
 This will add all friends of a target user who are not already your friends.
@@ -114,7 +116,69 @@ Enter the Steam ID of the user whose friends you want to add: 76561198099999999
 2025-12-29 12:05:00 - INFO -   Invalid IDs: 2
 ```
 
-## Example 3: Using Environment Variables
+## Example 3: Adding All Members of a Steam Group (NEW!)
+
+This feature adds all members of a Steam Community group as friends.
+
+### Scenario
+
+You joined a gaming clan's Steam group and want to add all members.
+
+### Step 1: Find the group identifier
+
+- Visit the group page, e.g. `https://steamcommunity.com/groups/valve`
+- The identifier is the part after `/groups/` – in this example `valve`
+- Alternatively, use the numeric Group ID shown in the group's XML feed URL
+
+### Step 2: Run the script
+
+```bash
+python steam_friend_adder.py
+```
+
+### Step 3: Choose Mode 3
+
+```
+============================================================
+       STEAM FRIEND ADDER
+============================================================
+
+Choose operation mode:
+1. Add friends from a file (steam_ids.txt)
+2. Add all friends of a specific user (mutual friends)
+3. Add all members of a Steam group
+
+Enter your choice (1, 2, or 3): 3
+
+--- ADD STEAM GROUP MEMBERS MODE ---
+This will add all members of a Steam Community group who are not already your friends.
+You can provide the group URL name (e.g. 'valve') or the numeric Group ID.
+
+Enter the Steam group URL name or Group ID: valve
+```
+
+### Expected Output
+
+```
+2025-12-29 12:00:00 - INFO - ADDING FRIENDS FROM GROUP: valve
+2025-12-29 12:00:01 - INFO - Fetching members of Steam group: valve
+2025-12-29 12:00:02 - INFO - Fetched page 1/3 (1000 members so far)
+2025-12-29 12:00:03 - INFO - Fetched page 2/3 (2000 members so far)
+2025-12-29 12:00:04 - INFO - Fetched page 3/3 (2500 members so far)
+2025-12-29 12:00:05 - INFO - Group has 2500 members total
+2025-12-29 12:00:06 - INFO - You already have 12 friends - they will be skipped
+2025-12-29 12:00:07 - INFO - Processing 2488 new group members...
+2025-12-29 12:00:08 - INFO - Processing member 1/2488: 76561198011111111
+2025-12-29 12:00:09 - INFO - ✓ SUCCESS: Steam ID validated and ready for friend request
+...
+2025-12-29 12:45:00 - INFO - SUMMARY:
+2025-12-29 12:45:00 - INFO -   Total processed: 2488
+2025-12-29 12:45:00 - INFO -   Successful: 2480
+2025-12-29 12:45:00 - INFO -   Failed: 0
+2025-12-29 12:45:00 - INFO -   Invalid IDs: 8
+```
+
+## Example 4: Using Environment Variables
 
 ### Create a .env file
 

@@ -6,6 +6,7 @@ This repository contains a Python script that automates the process of adding fr
 
 - ✅ **Add friends from a file**: Read Steam IDs from a text file and send friend requests
 - ✅ **Add mutual friends**: One-click feature to add all friends of a specific user who are not already your friends
+- ✅ **Add Steam group members**: Add all members of a Steam Community group who are not already your friends
 - ✅ **Steam Web API integration**: Uses official Steam API for validation and friend list retrieval
 - ✅ **Comprehensive error handling**: Handles invalid IDs, rate limits, private profiles, and network errors
 - ✅ **Detailed logging**: All operations are logged to both console and log file
@@ -88,7 +89,7 @@ Simply run the script without setting environment variables, and it will prompt 
 
 3. **Choose mode 1** when prompted and follow the instructions.
 
-### Mode 2: Add All Friends of a User (NEW!)
+### Mode 2: Add All Friends of a User
 
 This feature allows you to add all friends of a specific Steam user with one command.
 
@@ -112,6 +113,32 @@ This feature allows you to add all friends of a specific Steam user with one com
 - Quickly expand your friend network
 - Add friends from a community member
 - Connect with people in your gaming group
+
+### Mode 3: Add All Members of a Steam Group (NEW!)
+
+This feature lets you add all members of a Steam Community group as friends with a single command.
+
+1. **Run the script**:
+   ```bash
+   python steam_friend_adder.py
+   ```
+
+2. **Choose mode 3** when prompted.
+
+3. **Enter the group identifier** – either the group's URL name (e.g. `valve` from
+   `https://steamcommunity.com/groups/valve`) or its numeric Group ID.
+
+4. The script will:
+   - Fetch all group members (handles pagination for large groups)
+   - Retrieve your current friend list
+   - Skip members who are already your friends or are yourself
+   - Attempt to add each remaining member
+   - Log all results
+
+**Use Cases for Mode 3:**
+- Join a gaming community and instantly connect with all members
+- Add everyone in your clan or team
+- Expand your network through Steam group membership
 
 ## Output
 
