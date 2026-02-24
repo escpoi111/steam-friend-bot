@@ -61,6 +61,16 @@ You have two options for configuration:
    STEAM_ID=your_steam_id_here
    ```
 
+   **For Mode 4 with private Chat Groups** (optional), also add:
+   ```
+   STEAM_USERNAME=your_steam_username_here
+   STEAM_PASSWORD=your_steam_password_here
+   ```
+   These credentials are used only when fetching members of private Steam Chat
+   groups.  They are never logged or written to disk.  If your account uses
+   Steam Guard (email or mobile authenticator), you will be prompted to enter
+   the code at runtime.
+
 ### Option 2: Interactive Input
 
 Simply run the script without setting environment variables, and it will prompt you for the required information.
@@ -171,7 +181,10 @@ XML member list.
    - If the chat group is **linked to a Community Group** (clan), fetch members
      via the Community Group XML API — no extra authentication required
    - If the chat group is **private-only** (not linked to a Community Group),
-     explain that full Steam authentication is needed and provide next steps
+     and `STEAM_USERNAME`/`STEAM_PASSWORD` are configured in `.env`, perform
+     automatic Steam web login and fetch members via the authenticated API
+     (Steam Guard code is prompted interactively when required)
+   - If credentials are not configured, explain next steps
    - Skip members already on your friend list and attempt to add the rest
 
 **Use Cases for Mode 4:**
@@ -181,11 +194,21 @@ XML member list.
 **Authentication note for private chat groups:**
 
 Steam does not expose the member list of private chat groups through the public
-Web API. If Mode 4 reports that authentication is required, you have two options:
+Web API.  Mode 4 supports **fully managed authentication** ("全托管") for
+private groups:
 
-- **Option A** – If the group admin can share the Community Group URL
+- **Fully managed (recommended)** – Set `STEAM_USERNAME` and `STEAM_PASSWORD`
+  in your `.env` file.  The script will authenticate automatically and fetch
+  the member list.  If your account uses Steam Guard, the code will be prompted
+  at runtime (it is never logged or stored).
+  ```
+  STEAM_USERNAME=your_username
+  STEAM_PASSWORD=your_password
+  ```
+
+- **Manual fallback A** – If the group admin can share the Community Group URL
   (`/groups/<name>`), use Mode 3 instead.
-- **Option B** – Use the [`steam` Python library](https://github.com/ValvePython/steam)
+- **Manual fallback B** – Use the [`steam` Python library](https://github.com/ValvePython/steam)
   to authenticate with your Steam credentials, join the chat, and retrieve member
   SteamIDs manually. Then save those IDs to `steam_ids.txt` and use Mode 1.
   ```bash
@@ -203,7 +226,7 @@ Web API. If Mode 4 reports that authentication is required, you have two options
 | URL format | `steamcommunity.com/groups/<name>` | `steamcommunity.com/chat/invite/<code>` |
 | Public member list | ✅ Yes (XML API) | ❌ No |
 | Mode to use | Mode 3 | Mode 4 |
-| Requires Steam auth | No (API key only) | Only for private-only chats |
+| Requires Steam auth | No (API key only) | Only for private-only chats (set `STEAM_USERNAME`/`STEAM_PASSWORD`) |
 
 ---
 
@@ -272,8 +295,9 @@ This script provides the **foundation** for a friend management system and can b
   Community Group URL (e.g. `valve` or `https://steamcommunity.com/groups/valve`).
 
 **Problem**: Mode 4 says "full Steam authentication is required"
-- **Solution**: The chat group is private and not linked to a Community Group.
-  See the *Authentication note for private chat groups* section above for options.
+- **Solution**: Set `STEAM_USERNAME` and `STEAM_PASSWORD` in your `.env` file.
+  The script will authenticate automatically and prompt for a Steam Guard code
+  when required. See the *Authentication note for private chat groups* section above.
 
 ## File Structure
 
