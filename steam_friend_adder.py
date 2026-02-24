@@ -14,6 +14,7 @@ import sys
 import time
 import logging
 import requests
+import xml.etree.ElementTree as ET
 from typing import List, Tuple
 from datetime import datetime
 from dotenv import load_dotenv
@@ -34,6 +35,7 @@ class SteamFriendAdder:
     
     # Steam API endpoints
     STEAM_API_BASE = "https://api.steampowered.com"
+    STEAM_COMMUNITY_BASE = "https://steamcommunity.com"
     FRIEND_LIST_ENDPOINT = "ISteamUser/GetFriendList/v1"
     PLAYER_SUMMARIES_ENDPOINT = "ISteamUser/GetPlayerSummaries/v2"
     
@@ -453,6 +455,167 @@ class SteamFriendAdder:
         return results
 
 
+    def get_group_members(self, group_identifier: str) -> Tuple[bool, List[str], str]:
+        """
+        Get all members of a Steam Community group.
+
+        Uses the Steam Community group membership XML API which supports
+        pagination for large groups.
+
+        Args:
+            group_identifier (str): The group's URL name (e.g. 'valve') or
+                                    its 64-bit Group ID (GID).
+
+        Returns:
+            Tuple[bool, List[str], str]: (success, list_of_member_steam_ids, error_message)
+        """
+        # Determine whether the identifier is a numeric GID or a URL name
+        if group_identifier.strip().isdigit():
+            base_url = f"{self.STEAM_COMMUNITY_BASE}/gid/{group_identifier.strip()}/memberslistxml/"
+        else:
+            base_url = f"{self.STEAM_COMMUNITY_BASE}/groups/{group_identifier.strip()}/memberslistxml/"
+
+        member_ids: List[str] = []
+        page = 1
+
+        self.logger.info(f"Fetching members of Steam group: {group_identifier}")
+
+        while True:
+            try:
+                self._rate_limit_check()
+
+                params = {'xml': '1', 'p': page}
+                response = requests.get(base_url, params=params, timeout=10)
+
+                if response.status_code == 404:
+                    return False, [], "Group not found (404)"
+                elif response.status_code == 429:
+                    return False, [], "Rate limited by Steam Community"
+                elif response.status_code != 200:
+                    return False, [], f"HTTP error (status code: {response.status_code})"
+
+                root = ET.fromstring(response.text)
+
+                # Parse member Steam IDs from the XML response
+                members_elem = root.find('members')
+                if members_elem is None:
+                    return False, [], "No members element found in response"
+
+                for steam_id_elem in members_elem.findall('steamID64'):
+                    if steam_id_elem.text:
+                        member_ids.append(steam_id_elem.text.strip())
+
+                # Check pagination
+                total_pages_elem = root.find('totalPages')
+                total_pages = int(total_pages_elem.text) if total_pages_elem is not None and total_pages_elem.text else 1
+
+                self.logger.info(f"Fetched page {page}/{total_pages} ({len(member_ids)} members so far)")
+
+                if page >= total_pages:
+                    break
+                page += 1
+
+            except ET.ParseError as e:
+                return False, [], f"Failed to parse group XML response: {str(e)}"
+            except requests.exceptions.Timeout:
+                return False, [], "Request timeout"
+            except requests.exceptions.RequestException as e:
+                return False, [], f"Network error: {str(e)}"
+            except Exception as e:
+                return False, [], f"Error retrieving group members: {str(e)}"
+
+        return True, member_ids, ""
+
+    def add_group_members(self, group_identifier: str) -> dict:
+        """
+        Send friend requests to all members of a Steam Community group
+        who are not already your friends.
+
+        Args:
+            group_identifier (str): The group's URL name (e.g. 'valve') or
+                                    its 64-bit Group ID (GID).
+
+        Returns:
+            dict: Summary of results
+        """
+        self.logger.info("=" * 60)
+        self.logger.info(f"ADDING FRIENDS FROM GROUP: {group_identifier}")
+        self.logger.info("=" * 60)
+
+        # Fetch group members
+        success, member_ids, error = self.get_group_members(group_identifier)
+
+        if not success:
+            self.logger.error(error)
+            return {'error': error}
+
+        if not member_ids:
+            self.logger.info("No members found in this group.")
+            return {'total': 0, 'success': 0, 'failed': 0, 'invalid': 0, 'skipped': 0}
+
+        self.logger.info(f"Group has {len(member_ids)} members total")
+
+        # Exclude yourself from the list
+        member_ids = [mid for mid in member_ids if mid != self.steam_id]
+
+        # Get your current friend list to skip existing friends
+        self.logger.info("Retrieving your current friend list...")
+        friend_success, your_friends, friend_error = self.get_friend_list(self.steam_id)
+        if friend_success:
+            your_friends_set = set(your_friends)
+            self.logger.info(f"You already have {len(your_friends_set)} friends - they will be skipped")
+        else:
+            self.logger.warning(f"Could not retrieve your friend list: {friend_error}. Proceeding without skip check.")
+            your_friends_set = set()
+
+        to_add = [mid for mid in member_ids if mid not in your_friends_set]
+
+        if not to_add:
+            self.logger.info("No new members to add (you are already friends with all group members).")
+            return {'total': 0, 'success': 0, 'failed': 0, 'invalid': 0, 'skipped': 0}
+
+        results = {
+            'total': 0,
+            'success': 0,
+            'failed': 0,
+            'invalid': 0,
+            'skipped': 0
+        }
+
+        self.logger.info(f"Processing {len(to_add)} new group members...")
+        self.logger.info("=" * 60)
+
+        for i, member_id in enumerate(to_add, 1):
+            results['total'] += 1
+
+            self.logger.info(f"Processing member {i}/{len(to_add)}: {member_id}")
+
+            success_req, message = self.send_friend_request(member_id)
+
+            if success_req:
+                results['success'] += 1
+                self.logger.info(f"✓ SUCCESS: {message}")
+            else:
+                if "Validation failed" in message:
+                    results['invalid'] += 1
+                    self.logger.error(f"✗ INVALID: {message}")
+                else:
+                    results['failed'] += 1
+                    self.logger.error(f"✗ FAILED: {message}")
+
+            time.sleep(1)
+
+        self.logger.info("=" * 60)
+        self.logger.info("SUMMARY:")
+        self.logger.info(f"  Total processed: {results['total']}")
+        self.logger.info(f"  Successful: {results['success']}")
+        self.logger.info(f"  Failed: {results['failed']}")
+        self.logger.info(f"  Invalid IDs: {results['invalid']}")
+        self.logger.info("=" * 60)
+
+        return results
+
+
 def load_config() -> Tuple[str, str]:
     """
     Load configuration from environment variables or prompt user.
@@ -504,30 +667,54 @@ def main():
     print("\nChoose operation mode:")
     print("1. Add friends from a file (steam_ids.txt)")
     print("2. Add all friends of a specific user (mutual friends)")
+    print("3. Add all members of a Steam group")
     print()
-    
-    mode = input("Enter your choice (1 or 2): ").strip()
-    
+
+    mode = input("Enter your choice (1, 2, or 3): ").strip()
+
     if mode == "2":
-        # Mutual friends mode - NEW FEATURE
+        # Mutual friends mode
         print("\n--- ADD MUTUAL FRIENDS MODE ---")
         print("This will add all friends of a target user who are not already your friends.")
         print()
-        
+
         target_id = input("Enter the Steam ID of the user whose friends you want to add: ").strip()
-        
+
         if not target_id:
             print("\n❌ Error: Steam ID is required!")
             sys.exit(1)
-        
+
         print()
         results = adder.add_mutual_friends(target_id)
-        
+
         if 'error' not in results:
             print(f"\n✓ Processing complete! Check {adder.log_file} for detailed logs.")
         else:
             print(f"\n❌ Error: {results['error']}")
             sys.exit(1)
+
+    elif mode == "3":
+        # Group members mode - NEW FEATURE
+        print("\n--- ADD STEAM GROUP MEMBERS MODE ---")
+        print("This will add all members of a Steam Community group who are not already your friends.")
+        print("You can provide the group URL name (e.g. 'valve') or the numeric Group ID.")
+        print()
+
+        group_id = input("Enter the Steam group URL name or Group ID: ").strip()
+
+        if not group_id:
+            print("\n❌ Error: Group identifier is required!")
+            sys.exit(1)
+
+        print()
+        results = adder.add_group_members(group_id)
+
+        if 'error' not in results:
+            print(f"\n✓ Processing complete! Check {adder.log_file} for detailed logs.")
+        else:
+            print(f"\n❌ Error: {results['error']}")
+            sys.exit(1)
+
     else:
         # File mode - ORIGINAL FEATURE
         print("\n--- FILE MODE ---")
