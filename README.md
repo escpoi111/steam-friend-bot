@@ -6,7 +6,8 @@ This repository contains a Python script that automates the process of adding fr
 
 - ✅ **Add friends from a file**: Read Steam IDs from a text file and send friend requests
 - ✅ **Add mutual friends**: One-click feature to add all friends of a specific user who are not already your friends
-- ✅ **Add Steam group members**: Add all members of a Steam Community group who are not already your friends
+- ✅ **Add Steam Community group members**: Add all members of a Steam Community group who are not already your friends
+- ✅ **Add Steam Chat group members**: Add members from a Steam Chat group via its invite link (Mode 4)
 - ✅ **Steam Web API integration**: Uses official Steam API for validation and friend list retrieval
 - ✅ **Comprehensive error handling**: Handles invalid IDs, rate limits, private profiles, and network errors
 - ✅ **Detailed logging**: All operations are logged to both console and log file
@@ -114,9 +115,16 @@ This feature allows you to add all friends of a specific Steam user with one com
 - Add friends from a community member
 - Connect with people in your gaming group
 
-### Mode 3: Add All Members of a Steam Group (NEW!)
+### Mode 3: Add All Members of a Steam Community Group
 
-This feature lets you add all members of a Steam Community group as friends with a single command.
+This feature lets you add all members of a Steam **Community Group** as friends.
+Steam Community Groups are public groups with URLs like
+`https://steamcommunity.com/groups/<name>` and expose a public XML member list.
+
+> **Note**: If you have a Steam **Chat** invite link
+> (`steamcommunity.com/chat/invite/<code>`), use **Mode 4** instead.
+> Entering a chat invite link in Mode 3 will be detected automatically and
+> re-routed to the chat handler, but using Mode 4 directly is clearer.
 
 1. **Run the script**:
    ```bash
@@ -138,7 +146,66 @@ This feature lets you add all members of a Steam Community group as friends with
 **Use Cases for Mode 3:**
 - Join a gaming community and instantly connect with all members
 - Add everyone in your clan or team
-- Expand your network through Steam group membership
+- Expand your network through Steam Community group membership
+
+### Mode 4: Add All Members of a Steam Chat Group (NEW!)
+
+This feature lets you add friends from a Steam **Chat group** using its invite link.
+Steam Chat groups use invite links like
+`https://steamcommunity.com/chat/invite/<code>` and do **not** expose a public
+XML member list.
+
+1. **Run the script**:
+   ```bash
+   python steam_friend_adder.py
+   ```
+
+2. **Choose mode 4** when prompted.
+
+3. **Enter the invite link or code**:
+   - Full URL: `https://steamcommunity.com/chat/invite/ZiMUFTC2`
+   - Or just the code: `ZiMUFTC2`
+
+4. The script will:
+   - Resolve the invite link via the Steam Web API
+   - If the chat group is **linked to a Community Group** (clan), fetch members
+     via the Community Group XML API — no extra authentication required
+   - If the chat group is **private-only** (not linked to a Community Group),
+     explain that full Steam authentication is needed and provide next steps
+   - Skip members already on your friend list and attempt to add the rest
+
+**Use Cases for Mode 4:**
+- Add members from a gaming squad's chat room
+- Batch-add people from a private invite-only Steam group chat
+
+**Authentication note for private chat groups:**
+
+Steam does not expose the member list of private chat groups through the public
+Web API. If Mode 4 reports that authentication is required, you have two options:
+
+- **Option A** – If the group admin can share the Community Group URL
+  (`/groups/<name>`), use Mode 3 instead.
+- **Option B** – Use the [`steam` Python library](https://github.com/ValvePython/steam)
+  to authenticate with your Steam credentials, join the chat, and retrieve member
+  SteamIDs manually. Then save those IDs to `steam_ids.txt` and use Mode 1.
+  ```bash
+  pip install steam
+  ```
+  See the library's documentation for SteamClient authentication and chat room
+  enumeration.
+
+---
+
+## Steam Chat vs Community Group
+
+| Feature | Community Group | Steam Chat Group |
+|---------|----------------|-----------------|
+| URL format | `steamcommunity.com/groups/<name>` | `steamcommunity.com/chat/invite/<code>` |
+| Public member list | ✅ Yes (XML API) | ❌ No |
+| Mode to use | Mode 3 | Mode 4 |
+| Requires Steam auth | No (API key only) | Only for private-only chats |
+
+---
 
 ## Output
 
@@ -198,6 +265,15 @@ This script provides the **foundation** for a friend management system and can b
 
 **Problem**: Script says Steam ID not found
 - **Solution**: Verify the Steam ID is correct (17-digit number) using https://steamid.io/
+
+**Problem**: "Failed to parse group XML response" when entering a chat invite link
+- **Solution**: You entered a Steam **Chat** invite link (`/chat/invite/...`) in Mode 3,
+  which expects a **Community Group** URL or name. Use **Mode 4** instead, or provide the
+  Community Group URL (e.g. `valve` or `https://steamcommunity.com/groups/valve`).
+
+**Problem**: Mode 4 says "full Steam authentication is required"
+- **Solution**: The chat group is private and not linked to a Community Group.
+  See the *Authentication note for private chat groups* section above for options.
 
 ## File Structure
 

@@ -33,9 +33,10 @@ python steam_friend_adder.py
 Choose operation mode:
 1. Add friends from a file (steam_ids.txt)
 2. Add all friends of a specific user (mutual friends)
-3. Add all members of a Steam group
+3. Add all members of a Steam Community group
+4. Add all members of a Steam Chat group (via invite link)
 
-Enter your choice (1, 2, or 3): 1
+Enter your choice (1, 2, 3, or 4): 1
 
 --- FILE MODE ---
 Default input file: steam_ids.txt
@@ -86,9 +87,10 @@ python steam_friend_adder.py
 Choose operation mode:
 1. Add friends from a file (steam_ids.txt)
 2. Add all friends of a specific user (mutual friends)
-3. Add all members of a Steam group
+3. Add all members of a Steam Community group
+4. Add all members of a Steam Chat group (via invite link)
 
-Enter your choice (1, 2, or 3): 2
+Enter your choice (1, 2, 3, or 4): 2
 
 --- ADD MUTUAL FRIENDS MODE ---
 This will add all friends of a target user who are not already your friends.
@@ -116,13 +118,13 @@ Enter the Steam ID of the user whose friends you want to add: 76561198099999999
 2025-12-29 12:05:00 - INFO -   Invalid IDs: 2
 ```
 
-## Example 3: Adding All Members of a Steam Group (NEW!)
+## Example 3: Adding All Members of a Steam Community Group
 
-This feature adds all members of a Steam Community group as friends.
+This feature adds all members of a Steam **Community Group** as friends.
+Community Groups have public URLs like `https://steamcommunity.com/groups/<name>`
+and a publicly accessible XML member list.
 
-### Scenario
-
-You joined a gaming clan's Steam group and want to add all members.
+> For Steam **Chat** invite links (`/chat/invite/...`), see **Example 4** below.
 
 ### Step 1: Find the group identifier
 
@@ -146,11 +148,12 @@ python steam_friend_adder.py
 Choose operation mode:
 1. Add friends from a file (steam_ids.txt)
 2. Add all friends of a specific user (mutual friends)
-3. Add all members of a Steam group
+3. Add all members of a Steam Community group
+4. Add all members of a Steam Chat group (via invite link)
 
-Enter your choice (1, 2, or 3): 3
+Enter your choice (1, 2, 3, or 4): 3
 
---- ADD STEAM GROUP MEMBERS MODE ---
+--- ADD STEAM COMMUNITY GROUP MEMBERS MODE ---
 This will add all members of a Steam Community group who are not already your friends.
 You can provide the group URL name (e.g. 'valve') or the numeric Group ID.
 
@@ -178,7 +181,106 @@ Enter the Steam group URL name or Group ID: valve
 2025-12-29 12:45:00 - INFO -   Invalid IDs: 8
 ```
 
-## Example 4: Using Environment Variables
+## Example 4: Adding Members from a Steam Chat Group (NEW!)
+
+This feature lets you add members from a Steam **Chat Group** using its invite link.
+
+### Scenario
+
+You are in a private gaming squad chat and want to add all members as friends.
+
+### Step 1: Get the invite link
+
+Ask the chat admin for the invite link, e.g.:
+`https://steamcommunity.com/chat/invite/ZiMUFTC2`
+
+### Step 2: Run the script
+
+```bash
+python steam_friend_adder.py
+```
+
+### Step 3: Choose Mode 4
+
+```
+============================================================
+       STEAM FRIEND ADDER
+============================================================
+
+Choose operation mode:
+1. Add friends from a file (steam_ids.txt)
+2. Add all friends of a specific user (mutual friends)
+3. Add all members of a Steam Community group
+4. Add all members of a Steam Chat group (via invite link)
+
+Enter your choice (1, 2, 3, or 4): 4
+
+--- ADD STEAM CHAT GROUP MEMBERS MODE ---
+This will add all members of a Steam Chat group who are not already your friends.
+
+Accepted inputs:
+  • Full invite URL: https://steamcommunity.com/chat/invite/<code>
+  • Just the invite code, e.g.: ZiMUFTC2
+
+Enter chat invite URL or code: https://steamcommunity.com/chat/invite/ZiMUFTC2
+```
+
+### Expected Output – Chat linked to a Community Group
+
+If the chat group is linked to a Steam Community Group:
+
+```
+2025-12-29 12:00:00 - INFO - ADDING FRIENDS FROM CHAT GROUP: https://steamcommunity.com/chat/invite/ZiMUFTC2
+2025-12-29 12:00:01 - INFO - Resolving Steam chat invite: https://steamcommunity.com/chat/invite/ZiMUFTC2
+2025-12-29 12:00:02 - INFO - Chat invite resolved via API: My Gaming Squad
+2025-12-29 12:00:03 - INFO - Chat group is linked to Community Group (clan SteamID64: 103582791429521408).
+2025-12-29 12:00:03 - INFO - Fetching members via Community Group XML API...
+2025-12-29 12:00:04 - INFO - Fetched page 1/1 (45 members so far)
+2025-12-29 12:00:05 - INFO - Chat group has 45 members total
+2025-12-29 12:00:06 - INFO - You already have 10 friends - they will be skipped
+2025-12-29 12:00:07 - INFO - Processing 34 new chat group members...
+...
+2025-12-29 12:01:30 - INFO - SUMMARY:
+2025-12-29 12:01:30 - INFO -   Total processed: 34
+2025-12-29 12:01:30 - INFO -   Successful: 33
+2025-12-29 12:01:30 - INFO -   Failed: 0
+2025-12-29 12:01:30 - INFO -   Invalid IDs: 1
+```
+
+### Expected Output – Private-only Chat Group
+
+If the chat group is **not** linked to a Community Group, you receive clear guidance:
+
+```
+2025-12-29 12:00:00 - INFO - ADDING FRIENDS FROM CHAT GROUP: https://steamcommunity.com/chat/invite/ZiMUFTC2
+2025-12-29 12:00:01 - INFO - Resolving Steam chat invite: https://steamcommunity.com/chat/invite/ZiMUFTC2
+2025-12-29 12:00:02 - ERROR - Chat group 'My Private Chat' (ID: 12345) found with 20 active members,
+but this group is not linked to a Steam Community Group.
+
+Full Steam authentication is required to retrieve members of a private chat group.
+...
+To add members from this chat group:
+  1. Install the steam library: pip install steam
+  2. Use SteamClient to authenticate and enumerate the chat room
+  3. Collect member SteamIDs and add them via Mode 1 (file mode)
+  See README section 'Steam Chat vs Community Group' for details.
+
+❌ Error: Chat group 'My Private Chat' ...
+```
+
+### What if I accidentally enter a Chat invite in Mode 3?
+
+Mode 3 detects chat invite links and re-routes automatically:
+
+```
+Enter the Steam group URL name or Group ID: https://steamcommunity.com/chat/invite/ZiMUFTC2
+
+⚠️  Detected a Steam Chat invite link. Switching to Chat Members mode (Mode 4)...
+```
+
+---
+
+## Example 5: Using Environment Variables
 
 ### Create a .env file
 
@@ -205,7 +307,7 @@ python steam_friend_adder.py
 
 No need to enter API key or Steam ID - it goes straight to mode selection!
 
-## Example 4: Handling Errors
+## Example 6: Handling Errors
 
 ### Invalid Steam ID
 
