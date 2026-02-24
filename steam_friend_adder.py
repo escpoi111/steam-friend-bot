@@ -616,6 +616,14 @@ class SteamFriendAdder:
         return results
 
 
+def _exit_non_interactive():
+    """Print a helpful error message and exit when no interactive terminal is detected."""
+    print("\n❌ Error: No interactive terminal detected.")
+    print("Please set STEAM_API_KEY and STEAM_ID in a .env file.")
+    print("Copy .env.example to .env and fill in your credentials.")
+    sys.exit(1)
+
+
 def load_config() -> Tuple[str, str]:
     """
     Load configuration from environment variables or prompt user.
@@ -635,13 +643,19 @@ def load_config() -> Tuple[str, str]:
         print("\nYou need a Steam Web API key to use this script.")
         print("Get your API key from: https://steamcommunity.com/dev/apikey")
         print()
-        api_key = input("Enter your Steam Web API key: ").strip()
+        try:
+            api_key = input("Enter your Steam Web API key: ").strip()
+        except EOFError:
+            _exit_non_interactive()
         
     if not steam_id:
         print("\nEnter your Steam ID (the account that will send friend requests)")
         print("Find your Steam ID at: https://steamid.io/")
         print()
-        steam_id = input("Enter your Steam ID: ").strip()
+        try:
+            steam_id = input("Enter your Steam ID: ").strip()
+        except EOFError:
+            _exit_non_interactive()
         
     return api_key, steam_id
 
@@ -670,10 +684,14 @@ def main():
     print("3. Add all members of a Steam group")
     print()
 
-    mode = input("Enter your choice (1, 2, or 3): ").strip()
+    try:
+        mode = input("Enter your choice (1, 2, or 3): ").strip()
+    except EOFError:
+        print("\n❌ Error: No interactive terminal detected.")
+        print("Please run this script in an interactive terminal.")
+        sys.exit(1)
 
     if mode == "2":
-        # Mutual friends mode
         print("\n--- ADD MUTUAL FRIENDS MODE ---")
         print("This will add all friends of a target user who are not already your friends.")
         print()
