@@ -1,0 +1,9 @@
+{
+  "api_key": "your_steam_api_key_here",
+  "steam_id": "76561198012345678",
+  "session_id": "your_session_id_here",
+  "cookies": "steamLoginSecure=your_steam_login_secure_cookie_here",
+  "add_delay_seconds": 5,
+  "friend_codes_file": "friend_codes.txt",
+  "exclude_file": "exclude_list.txt"
+}

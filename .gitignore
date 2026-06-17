@@ -1,6 +1,7 @@
 # Environment files
 .env
 *.env
+steam_friend_bot.local.json
 
 # Log files
 *.log

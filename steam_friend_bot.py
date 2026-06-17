@@ -15,9 +15,7 @@ import time
 import logging
 import requests
 from typing import List, Set
-from dotenv import load_dotenv
-
-load_dotenv()
+from steam_local_config import parse_cookies, resolve_steam_config
 
 # 日志配置
 logging.basicConfig(
@@ -130,7 +128,14 @@ class SteamFriendBot:
     )
     FRIEND_LIST_URL = "https://api.steampowered.com/ISteamUser/GetFriendList/v1"
 
-    def __init__(self, api_key: str, steam_id: str, session_id: str, cookies: str):
+    def __init__(
+        self,
+        api_key: str,
+        steam_id: str,
+        session_id: str,
+        cookies: str,
+        delay_seconds: float = 5,
+    ):
         """初始化机器人。
 
         Args:
@@ -142,19 +147,8 @@ class SteamFriendBot:
         self.api_key = api_key
         self.steam_id = steam_id
         self.session_id = session_id
-        self.cookies = self._parse_cookies(cookies)
-        self.delay = float(os.getenv("ADD_DELAY_SECONDS", "5"))
-
-    @staticmethod
-    def _parse_cookies(cookies_str: str) -> dict:
-        """解析 cookies 字符串为字典。"""
-        cookie_dict = {}
-        for item in cookies_str.split(";"):
-            item = item.strip()
-            if "=" in item:
-                key, value = item.split("=", 1)
-                cookie_dict[key.strip()] = value.strip()
-        return cookie_dict
+        self.cookies = parse_cookies(cookies)
+        self.delay = delay_seconds
 
     def get_existing_friends(self) -> Set[str]:
         """获取当前好友列表。"""
@@ -333,42 +327,29 @@ class SteamFriendBot:
 
 def main():
     """主函数。"""
-    # 从环境变量读取配置
-    api_key = os.getenv("STEAM_API_KEY")
-    steam_id = os.getenv("STEAM_ID")
-    session_id = os.getenv("STEAM_SESSION_ID")
-    cookies = os.getenv("STEAM_COOKIES")
-
-    # 检查必要配置
-    missing = []
-    if not api_key:
-        missing.append("STEAM_API_KEY")
-    if not steam_id:
-        missing.append("STEAM_ID")
-    if not session_id:
-        missing.append("STEAM_SESSION_ID")
-    if not cookies:
-        missing.append("STEAM_COOKIES")
-
-    if missing:
-        logger.error("缺少以下必要配置，请在 .env 文件中设置:")
-        for m in missing:
-            logger.error(f"  - {m}")
-        logger.error("请参考 .env.example 文件进行配置")
+    config, errors = resolve_steam_config()
+    if errors:
+        logger.error("本地 Steam 配置无效，请检查以下项目:")
+        for error in errors:
+            logger.error(f"  - {error}")
+        logger.error(
+            "请参考 .env.example，或在本地配置文件中填写 %s",
+            config.config_path,
+        )
         sys.exit(1)
-
-    # 自定义文件路径（可通过环境变量覆盖）
-    friend_codes_file = os.getenv("FRIEND_CODES_FILE", "friend_codes.txt")
-    exclude_file = os.getenv("EXCLUDE_FILE", "exclude_list.txt")
 
     # 创建机器人并运行
     bot = SteamFriendBot(
-        api_key=api_key,
-        steam_id=steam_id,
-        session_id=session_id,
-        cookies=cookies,
+        api_key=config.api_key,
+        steam_id=config.steam_id,
+        session_id=config.session_id,
+        cookies=config.cookies,
+        delay_seconds=config.delay_seconds,
     )
-    bot.run(friend_codes_file=friend_codes_file, exclude_file=exclude_file)
+    bot.run(
+        friend_codes_file=config.friend_codes_file,
+        exclude_file=config.exclude_file,
+    )
 
 
 if __name__ == "__main__":
