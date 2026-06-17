@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 import requests
 from typing import List, Set
+from steam_local_config import parse_cookies, resolve_steam_config
 
 
 # ==================== 核心逻辑 ====================
@@ -50,18 +51,6 @@ def resolve_to_steam_id(code: str) -> str:
         return normalized
     return friend_code_to_steam_id(code)
 
-
-def parse_cookies(cookies_str: str) -> dict:
-    """解析 cookies 字符串为字典。"""
-    cookie_dict = {}
-    for item in cookies_str.split(";"):
-        item = item.strip()
-        if "=" in item:
-            key, value = item.split("=", 1)
-            cookie_dict[key.strip()] = value.strip()
-    return cookie_dict
-
-
 # ==================== GUI 应用 ====================
 
 
@@ -77,8 +66,11 @@ class SteamFriendBotGUI:
         # 状态
         self.is_running = False
         self.stop_flag = False
+        self.friend_codes_file = ""
+        self.exclude_file = ""
 
         self._build_ui()
+        self._load_local_config(initial=True)
 
     def _build_ui(self):
         """构建界面。"""
@@ -126,14 +118,30 @@ class SteamFriendBotGUI:
         ttk.Entry(
             config_frame, textvariable=self.cookies_var, width=60, show="*"
         ).grid(row=3, column=1, sticky=tk.EW, pady=2, padx=(5, 0))
+        ttk.Label(
+            config_frame,
+            text="Cookies 中可只保留 steamLoginSecure，sessionid 会自动复用上方配置",
+        ).grid(row=4, column=1, sticky=tk.W, pady=(0, 4), padx=(5, 0))
 
         # 延迟
         ttk.Label(config_frame, text="添加间隔(秒):").grid(
-            row=4, column=0, sticky=tk.W, pady=2
+            row=5, column=0, sticky=tk.W, pady=2
         )
         self.delay_var = tk.StringVar(value="5")
         ttk.Entry(config_frame, textvariable=self.delay_var, width=10).grid(
-            row=4, column=1, sticky=tk.W, pady=2, padx=(5, 0)
+            row=5, column=1, sticky=tk.W, pady=2, padx=(5, 0)
+        )
+
+        config_button_row = ttk.Frame(config_frame)
+        config_button_row.grid(row=6, column=1, sticky=tk.W, pady=(4, 0), padx=(5, 0))
+        ttk.Button(
+            config_button_row,
+            text="从本地配置加载",
+            command=self._load_local_config,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        self.config_status_var = tk.StringVar(value="未加载本地配置")
+        ttk.Label(config_button_row, textvariable=self.config_status_var).pack(
+            side=tk.LEFT
         )
 
         config_frame.columnconfigure(1, weight=1)
@@ -265,26 +273,85 @@ class SteamFriendBotGUI:
         """清空排除列表。"""
         self.exclude_text.delete("1.0", tk.END)
 
-    def _validate_config(self) -> bool:
-        """验证配置是否完整。"""
-        if not self.api_key_var.get().strip():
-            messagebox.showerror("错误", "请填写 Steam API Key")
-            return False
-        if not self.steam_id_var.get().strip():
-            messagebox.showerror("错误", "请填写你的 SteamID64")
-            return False
-        if not self.session_id_var.get().strip():
-            messagebox.showerror("错误", "请填写 Session ID")
-            return False
-        if not self.cookies_var.get().strip():
-            messagebox.showerror("错误", "请填写 Cookies")
-            return False
-        try:
-            float(self.delay_var.get())
-        except ValueError:
-            messagebox.showerror("错误", "添加间隔必须是数字")
-            return False
-        return True
+    def _get_config_overrides(self) -> dict:
+        return {
+            "api_key": self.api_key_var.get().strip(),
+            "steam_id": self.steam_id_var.get().strip(),
+            "session_id": self.session_id_var.get().strip(),
+            "cookies": self.cookies_var.get().strip(),
+            "add_delay_seconds": self.delay_var.get().strip(),
+        }
+
+    def _load_text_file(
+        self,
+        file_path: str,
+        target_widget,
+        empty_log_message: str,
+        log_missing: bool = True,
+    ):
+        if not file_path:
+            return
+        if not os.path.exists(file_path):
+            if log_missing:
+                self._log(empty_log_message.format(file_path=file_path))
+            return
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        target_widget.delete("1.0", tk.END)
+        target_widget.insert("1.0", content)
+
+    def _apply_resolved_config(
+        self,
+        config,
+        log_result: bool = True,
+        load_files: bool = True,
+        log_missing_files: bool = True,
+    ):
+        self.api_key_var.set(config.api_key)
+        self.steam_id_var.set(config.steam_id)
+        self.session_id_var.set(config.session_id)
+        self.cookies_var.set(config.cookies)
+        self.delay_var.set(config.add_delay_seconds)
+        self.friend_codes_file = config.friend_codes_file
+        self.exclude_file = config.exclude_file
+        self.config_status_var.set(f"已加载: {config.config_path}")
+        if load_files:
+            self._load_text_file(
+                config.friend_codes_file,
+                self.codes_text,
+                "⚠️ 本地好友代码文件不存在: {file_path}",
+                log_missing=log_missing_files,
+            )
+            self._load_text_file(
+                config.exclude_file,
+                self.exclude_text,
+                "⚠️ 本地排除列表文件不存在: {file_path}",
+                log_missing=log_missing_files,
+            )
+            self._update_code_count()
+        if log_result:
+            self._log(f"已加载本地配置: {config.config_path}")
+
+    def _load_local_config(self, initial: bool = False):
+        config, errors = resolve_steam_config(overrides=self._get_config_overrides())
+        self._apply_resolved_config(
+            config,
+            log_result=not initial,
+            log_missing_files=not initial,
+        )
+        if errors and not initial:
+            messagebox.showwarning("本地配置提示", "\n".join(errors))
+        elif initial and not config.config_file_found:
+            self.config_status_var.set("使用 .env / 环境变量默认配置")
+
+    def _validate_config(self):
+        """验证配置并返回解析后的配置。"""
+        config, errors = resolve_steam_config(overrides=self._get_config_overrides())
+        if errors:
+            messagebox.showerror("错误", "\n".join(errors))
+            return None
+        self._apply_resolved_config(config, log_result=False, load_files=False)
+        return config
 
     def _get_codes_list(self) -> List[str]:
         """获取好友代码列表。"""
@@ -306,7 +373,8 @@ class SteamFriendBotGUI:
 
     def _start(self):
         """开始添加好友。"""
-        if not self._validate_config():
+        config = self._validate_config()
+        if not config:
             return
 
         codes = self._get_codes_list()
@@ -321,7 +389,7 @@ class SteamFriendBotGUI:
         self.status_label.config(text="运行中...", foreground="blue")
 
         # 在后台线程运行
-        thread = threading.Thread(target=self._run_bot, daemon=True)
+        thread = threading.Thread(target=self._run_bot, args=(config,), daemon=True)
         thread.start()
 
     def _stop(self):
@@ -336,14 +404,14 @@ class SteamFriendBotGUI:
         self.stop_btn.config(state=tk.DISABLED)
         self.status_label.config(text="就绪", foreground="green")
 
-    def _run_bot(self):
+    def _run_bot(self, config):
         """后台线程: 执行添加好友逻辑。"""
         try:
-            api_key = self.api_key_var.get().strip()
-            steam_id = self.steam_id_var.get().strip()
-            session_id = self.session_id_var.get().strip()
-            cookies_str = self.cookies_var.get().strip()
-            delay = float(self.delay_var.get())
+            api_key = config.api_key
+            steam_id = config.steam_id
+            session_id = config.session_id
+            cookies_str = config.cookies
+            delay = config.delay_seconds
 
             cookies = parse_cookies(cookies_str)
             codes = self._get_codes_list()
