@@ -5,8 +5,9 @@
 # Log files
 *.log
 
-# Steam IDs file (actual, not example)
-steam_ids.txt
+# 好友代码和排除列表 (实际使用的文件，不是示例)
+friend_codes.txt
+exclude_list.txt
 
 # Python cache
 __pycache__/
@@ -20,6 +21,11 @@ venv/
 ENV/
 env/
 .venv
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
 
 # IDE
 .vscode/
