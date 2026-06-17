@@ -22,6 +22,11 @@ ENV/
 env/
 .venv
 
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
 # IDE
 .vscode/
 .idea/

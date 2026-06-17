@@ -2,17 +2,55 @@
 
 一个简单的 Steam 自动加好友工具。支持批量导入好友代码，自动发送好友请求，并可设置排除列表来跳过不需要添加的好友。
 
+**提供图形界面(GUI)版本，可打包为 EXE 直接运行，无需安装 Python！**
+
 ## 功能
 
+- ✅ **傻瓜式图形界面** - 无需命令行操作
 - ✅ 批量导入多个 Steam 好友代码
 - ✅ 自动发送好友请求
 - ✅ 支持排除列表（选择哪些好友不需要添加）
 - ✅ 自动跳过已是好友的用户
 - ✅ 支持好友代码和 SteamID64 两种格式
 - ✅ 请求间自动延迟，避免触发 Steam 限制
-- ✅ 详细的运行日志
+- ✅ 实时运行日志
+- ✅ **一键打包为 EXE**
 
 ## 快速开始
+
+### 方式一：图形界面版（推荐，傻瓜式操作）
+
+#### 直接运行
+
+```bash
+pip install -r requirements.txt
+python steam_friend_bot_gui.py
+```
+
+#### 打包为 EXE（Windows）
+
+双击 `build.bat` 即可自动打包，生成的 EXE 在 `dist/SteamFriendBot.exe`。
+
+或手动执行：
+
+```bash
+pip install -r requirements.txt
+pyinstaller --onefile --windowed --name SteamFriendBot steam_friend_bot_gui.py
+```
+
+打包完成后，直接双击 `dist/SteamFriendBot.exe` 运行，无需安装 Python。
+
+#### GUI 使用步骤
+
+1. 填写 Steam 配置信息（API Key、SteamID64、Session ID、Cookies）
+2. 在「好友代码」区域粘贴好友代码，或点击「从文件导入」
+3. (可选) 在「排除列表」区域填入不需要添加的好友
+4. 点击「🚀 开始添加好友」
+5. 在日志区域实时查看进度
+
+---
+
+### 方式二：命令行版
 
 ### 1. 安装依赖
 

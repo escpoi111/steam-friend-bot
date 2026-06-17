@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""
+Steam 自动加好友程序 - 图形界面版
+==================================
+傻瓜式操作界面，支持:
+- 填写 Steam 配置信息
+- 批量导入好友代码
+- 设置排除列表
+- 一键开始添加好友
+- 实时查看运行日志
+
+可用 PyInstaller 打包为 exe:
+    pyinstaller --onefile --windowed --name SteamFriendBot steam_friend_bot_gui.py
+"""
+
+import os
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox, filedialog
+import requests
+from typing import List, Set
+
+
+# ==================== 核心逻辑 ====================
+
+STEAM_BASE_ID = 76561197960265728
+
+
+def friend_code_to_steam_id(friend_code: str) -> str:
+    """将 Steam 好友代码转换为 SteamID64。"""
+    code = friend_code.strip().replace("-", "").replace(" ", "")
+    if not code.isdigit():
+        raise ValueError(f"无效的好友代码: {friend_code}")
+    account_id = int(code)
+    steam_id64 = account_id + STEAM_BASE_ID
+    return str(steam_id64)
+
+
+def normalize_code(code: str) -> str:
+    """标准化好友代码。"""
+    return code.strip().replace("-", "").replace(" ", "")
+
+
+def resolve_to_steam_id(code: str) -> str:
+    """将好友代码或 SteamID64 解析为 SteamID64。"""
+    normalized = normalize_code(code)
+    if len(normalized) == 17 and normalized.startswith("7656"):
+        return normalized
+    return friend_code_to_steam_id(code)
+
+
+def parse_cookies(cookies_str: str) -> dict:
+    """解析 cookies 字符串为字典。"""
+    cookie_dict = {}
+    for item in cookies_str.split(";"):
+        item = item.strip()
+        if "=" in item:
+            key, value = item.split("=", 1)
+            cookie_dict[key.strip()] = value.strip()
+    return cookie_dict
+
+
+# ==================== GUI 应用 ====================
+
+
+class SteamFriendBotGUI:
+    """Steam 自动加好友 - 图形界面。"""
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Steam 自动加好友工具")
+        self.root.geometry("750x700")
+        self.root.resizable(True, True)
+
+        # 状态
+        self.is_running = False
+        self.stop_flag = False
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """构建界面。"""
+        # 主框架
+        main_frame = ttk.Frame(self.root, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # ===== 配置区域 =====
+        config_frame = ttk.LabelFrame(main_frame, text="Steam 配置", padding=10)
+        config_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # API Key
+        ttk.Label(config_frame, text="API Key:").grid(
+            row=0, column=0, sticky=tk.W, pady=2
+        )
+        self.api_key_var = tk.StringVar()
+        self.api_key_entry = ttk.Entry(
+            config_frame, textvariable=self.api_key_var, width=60, show="*"
+        )
+        self.api_key_entry.grid(row=0, column=1, sticky=tk.EW, pady=2, padx=(5, 0))
+
+        # Steam ID
+        ttk.Label(config_frame, text="你的SteamID64:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.steam_id_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.steam_id_var, width=60).grid(
+            row=1, column=1, sticky=tk.EW, pady=2, padx=(5, 0)
+        )
+
+        # Session ID
+        ttk.Label(config_frame, text="Session ID:").grid(
+            row=2, column=0, sticky=tk.W, pady=2
+        )
+        self.session_id_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.session_id_var, width=60).grid(
+            row=2, column=1, sticky=tk.EW, pady=2, padx=(5, 0)
+        )
+
+        # Cookies
+        ttk.Label(config_frame, text="Cookies:").grid(
+            row=3, column=0, sticky=tk.W, pady=2
+        )
+        self.cookies_var = tk.StringVar()
+        ttk.Entry(
+            config_frame, textvariable=self.cookies_var, width=60, show="*"
+        ).grid(row=3, column=1, sticky=tk.EW, pady=2, padx=(5, 0))
+
+        # 延迟
+        ttk.Label(config_frame, text="添加间隔(秒):").grid(
+            row=4, column=0, sticky=tk.W, pady=2
+        )
+        self.delay_var = tk.StringVar(value="5")
+        ttk.Entry(config_frame, textvariable=self.delay_var, width=10).grid(
+            row=4, column=1, sticky=tk.W, pady=2, padx=(5, 0)
+        )
+
+        config_frame.columnconfigure(1, weight=1)
+
+        # ===== 好友代码区域 =====
+        codes_frame = ttk.LabelFrame(main_frame, text="好友代码 (每行一个)", padding=10)
+        codes_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # 按钮行
+        btn_row = ttk.Frame(codes_frame)
+        btn_row.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Button(btn_row, text="从文件导入", command=self._import_codes).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        ttk.Button(btn_row, text="清空", command=self._clear_codes).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        self.code_count_label = ttk.Label(btn_row, text="共 0 个")
+        self.code_count_label.pack(side=tk.RIGHT)
+
+        self.codes_text = scrolledtext.ScrolledText(codes_frame, height=6, width=60)
+        self.codes_text.pack(fill=tk.BOTH, expand=True)
+        self.codes_text.bind("<KeyRelease>", self._update_code_count)
+
+        # ===== 排除列表区域 =====
+        exclude_frame = ttk.LabelFrame(
+            main_frame, text="排除列表 - 不需要添加的好友 (每行一个)", padding=10
+        )
+        exclude_frame.pack(fill=tk.X, pady=(0, 10))
+
+        exc_btn_row = ttk.Frame(exclude_frame)
+        exc_btn_row.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Button(exc_btn_row, text="从文件导入", command=self._import_excludes).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        ttk.Button(exc_btn_row, text="清空", command=self._clear_excludes).pack(
+            side=tk.LEFT
+        )
+
+        self.exclude_text = scrolledtext.ScrolledText(
+            exclude_frame, height=3, width=60
+        )
+        self.exclude_text.pack(fill=tk.X)
+
+        # ===== 操作按钮 =====
+        action_frame = ttk.Frame(main_frame)
+        action_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.start_btn = ttk.Button(
+            action_frame,
+            text="🚀 开始添加好友",
+            command=self._start,
+        )
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.stop_btn = ttk.Button(
+            action_frame, text="⏹ 停止", command=self._stop, state=tk.DISABLED
+        )
+        self.stop_btn.pack(side=tk.LEFT)
+
+        self.status_label = ttk.Label(action_frame, text="就绪", foreground="green")
+        self.status_label.pack(side=tk.RIGHT)
+
+        # ===== 日志区域 =====
+        log_frame = ttk.LabelFrame(main_frame, text="运行日志", padding=5)
+        log_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.log_text = scrolledtext.ScrolledText(
+            log_frame, height=8, width=60, state=tk.DISABLED
+        )
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+
+    def _log(self, msg: str):
+        """向日志区域添加消息。"""
+        self.root.after(0, self._append_log, msg)
+
+    def _append_log(self, msg: str):
+        """在主线程中追加日志。"""
+        self.log_text.config(state=tk.NORMAL)
+        timestamp = time.strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{timestamp}] {msg}\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def _update_code_count(self, event=None):
+        """更新好友代码计数。"""
+        lines = [
+            l.strip()
+            for l in self.codes_text.get("1.0", tk.END).splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.code_count_label.config(text=f"共 {len(lines)} 个")
+
+    def _import_codes(self):
+        """从文件导入好友代码。"""
+        file_path = filedialog.askopenfilename(
+            title="选择好友代码文件",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+        )
+        if file_path:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.codes_text.delete("1.0", tk.END)
+            self.codes_text.insert("1.0", content)
+            self._update_code_count()
+            self._log(f"已从文件导入: {file_path}")
+
+    def _clear_codes(self):
+        """清空好友代码。"""
+        self.codes_text.delete("1.0", tk.END)
+        self._update_code_count()
+
+    def _import_excludes(self):
+        """从文件导入排除列表。"""
+        file_path = filedialog.askopenfilename(
+            title="选择排除列表文件",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+        )
+        if file_path:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.exclude_text.delete("1.0", tk.END)
+            self.exclude_text.insert("1.0", content)
+            self._log(f"已导入排除列表: {file_path}")
+
+    def _clear_excludes(self):
+        """清空排除列表。"""
+        self.exclude_text.delete("1.0", tk.END)
+
+    def _validate_config(self) -> bool:
+        """验证配置是否完整。"""
+        if not self.api_key_var.get().strip():
+            messagebox.showerror("错误", "请填写 Steam API Key")
+            return False
+        if not self.steam_id_var.get().strip():
+            messagebox.showerror("错误", "请填写你的 SteamID64")
+            return False
+        if not self.session_id_var.get().strip():
+            messagebox.showerror("错误", "请填写 Session ID")
+            return False
+        if not self.cookies_var.get().strip():
+            messagebox.showerror("错误", "请填写 Cookies")
+            return False
+        try:
+            float(self.delay_var.get())
+        except ValueError:
+            messagebox.showerror("错误", "添加间隔必须是数字")
+            return False
+        return True
+
+    def _get_codes_list(self) -> List[str]:
+        """获取好友代码列表。"""
+        codes = []
+        for line in self.codes_text.get("1.0", tk.END).splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                codes.append(line)
+        return codes
+
+    def _get_exclude_set(self) -> Set[str]:
+        """获取排除列表。"""
+        excludes = set()
+        for line in self.exclude_text.get("1.0", tk.END).splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                excludes.add(line)
+        return excludes
+
+    def _start(self):
+        """开始添加好友。"""
+        if not self._validate_config():
+            return
+
+        codes = self._get_codes_list()
+        if not codes:
+            messagebox.showerror("错误", "请先输入或导入好友代码")
+            return
+
+        self.is_running = True
+        self.stop_flag = False
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.status_label.config(text="运行中...", foreground="blue")
+
+        # 在后台线程运行
+        thread = threading.Thread(target=self._run_bot, daemon=True)
+        thread.start()
+
+    def _stop(self):
+        """停止添加。"""
+        self.stop_flag = True
+        self._log("正在停止...")
+
+    def _finish(self):
+        """运行结束后恢复界面。"""
+        self.is_running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_label.config(text="就绪", foreground="green")
+
+    def _run_bot(self):
+        """后台线程: 执行添加好友逻辑。"""
+        try:
+            api_key = self.api_key_var.get().strip()
+            steam_id = self.steam_id_var.get().strip()
+            session_id = self.session_id_var.get().strip()
+            cookies_str = self.cookies_var.get().strip()
+            delay = float(self.delay_var.get())
+
+            cookies = parse_cookies(cookies_str)
+            codes = self._get_codes_list()
+            exclude_set = self._get_exclude_set()
+
+            self._log(f"共 {len(codes)} 个好友代码，{len(exclude_set)} 个排除项")
+            self._log("正在获取当前好友列表...")
+
+            # 获取已有好友
+            existing_friends: Set[str] = set()
+            try:
+                resp = requests.get(
+                    "https://api.steampowered.com/ISteamUser/GetFriendList/v1",
+                    params={"key": api_key, "steamid": steam_id},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                friends = resp.json().get("friendslist", {}).get("friends", [])
+                existing_friends = {f["steamid"] for f in friends}
+                self._log(f"当前已有 {len(existing_friends)} 个好友")
+            except Exception as e:
+                self._log(f"⚠️ 获取好友列表失败: {e}")
+
+            # 统计
+            success_count = 0
+            skip_count = 0
+            fail_count = 0
+
+            for i, code in enumerate(codes):
+                if self.stop_flag:
+                    self._log("用户手动停止")
+                    break
+
+                normalized = normalize_code(code)
+
+                # 检查排除列表
+                is_excluded = any(
+                    normalize_code(exc) == normalized for exc in exclude_set
+                )
+                if is_excluded:
+                    self._log(f"[跳过-排除] {code}")
+                    skip_count += 1
+                    continue
+
+                # 解析 SteamID64
+                try:
+                    target_id = resolve_to_steam_id(code)
+                except ValueError as e:
+                    self._log(f"[错误] {code}: {e}")
+                    fail_count += 1
+                    continue
+
+                # 已是好友
+                if target_id in existing_friends:
+                    self._log(f"[跳过-已好友] {code}")
+                    skip_count += 1
+                    continue
+
+                # 自己
+                if target_id == steam_id:
+                    self._log(f"[跳过] {code} (自己)")
+                    skip_count += 1
+                    continue
+
+                # 获取昵称
+                player_name = "未知"
+                try:
+                    resp = requests.get(
+                        "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2",
+                        params={"key": api_key, "steamids": target_id},
+                        timeout=10,
+                    )
+                    players = resp.json().get("response", {}).get("players", [])
+                    if players:
+                        player_name = players[0].get("personaname", "未知")
+                except Exception:
+                    pass
+
+                # 发送好友请求
+                self._log(
+                    f"[{i+1}/{len(codes)}] 添加 {player_name} ({target_id})..."
+                )
+
+                try:
+                    resp = requests.post(
+                        "https://steamcommunity.com/actions/AddFriendAjax",
+                        data={
+                            "sessionID": session_id,
+                            "steamid": target_id,
+                            "accept_invite": 0,
+                        },
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                            "X-Requested-With": "XMLHttpRequest",
+                            "Referer": f"https://steamcommunity.com/profiles/{target_id}",
+                        },
+                        cookies=cookies,
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        result = resp.json() if resp.text else {}
+                        if result.get("invited") or result.get("success") == 1:
+                            self._log(f"  ✅ 成功添加 {player_name}")
+                            success_count += 1
+                        else:
+                            self._log(f"  ❌ 失败: {resp.text}")
+                            fail_count += 1
+                    else:
+                        self._log(f"  ❌ 请求失败 (HTTP {resp.status_code})")
+                        fail_count += 1
+                except Exception as e:
+                    self._log(f"  ❌ 异常: {e}")
+                    fail_count += 1
+
+                # 延迟
+                if i < len(codes) - 1 and not self.stop_flag:
+                    time.sleep(delay)
+
+            # 汇总
+            self._log("=" * 40)
+            self._log(f"执行完成! 成功:{success_count} 跳过:{skip_count} 失败:{fail_count}")
+            self._log("=" * 40)
+
+        except Exception as e:
+            self._log(f"运行出错: {e}")
+
+        finally:
+            self.root.after(0, self._finish)
+
+    def run(self):
+        """启动 GUI。"""
+        self.root.mainloop()
+
+
+def main():
+    app = SteamFriendBotGUI()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
