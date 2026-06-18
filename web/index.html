@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Steam Friend Bot — 傻瓜式配置</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Steam Friend Bot</h1>
+
+    <section class="card">
+      <h2>手机号处理</h2>
+      <input id="phone" type="text" placeholder="请输入手机号，例如 13800138000" />
+      <button id="runBtn">开始处理</button>
+    </section>
+
+    <section class="card">
+      <h2>配置导入（自动校验 + 回滚）</h2>
+      <input id="file" type="file" accept=".yaml,.yml,.json" />
+      <button id="importBtn">导入配置</button>
+    </section>
+
+    <section class="card">
+      <h2>结果</h2>
+      <pre id="result">等待操作...</pre>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

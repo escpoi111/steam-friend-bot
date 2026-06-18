@@ -2,11 +2,15 @@
 
 一个简单的 Steam 自动加好友工具。支持批量导入好友代码，自动发送好友请求，并可设置排除列表来跳过不需要添加的好友。
 
-**提供图形界面(GUI)版本，可打包为 EXE 直接运行，无需安装 Python！**
+**提供图形界面(GUI)版本，可打包为 EXE 直接运行，无需安装 Python！**  
+**同时提供傻瓜式 Flask Web UI，支持一键 Docker 部署和 GitHub Actions 自动发布。**
 
 ## 功能
 
 - ✅ **傻瓜式图形界面** - 无需命令行操作
+- ✅ **Flask Web UI** - 浏览器输入手机号一键处理
+- ✅ **自动配置 bootstrap** - 首次启动自动生成 `config/config.yaml`，支持 `.env` 覆盖
+- ✅ **配置导入与回滚** - 支持文件上传或 JSON 方式导入，失败自动回滚
 - ✅ 批量导入多个 Steam 好友代码
 - ✅ 自动发送好友请求
 - ✅ 支持排除列表（选择哪些好友不需要添加）
@@ -15,6 +19,83 @@
 - ✅ 请求间自动延迟，避免触发 Steam 限制
 - ✅ 实时运行日志
 - ✅ **一键打包为 EXE**
+
+## Web UI 快速开始
+
+### 本地运行
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+打开 `http://127.0.0.1:8080` 即可使用。
+
+### Docker 运行
+
+```bash
+docker compose up -d --build
+```
+
+访问 `http://localhost:8080`。容器内置健康检查，每 10 秒检测 `/healthz`。
+
+### API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/healthz` | 健康检查，返回 `{"ok": true}` |
+| `POST` | `/api/run` | 手机号校验与处理（`{"phone": "13800138000"}`） |
+| `POST` | `/api/config/import` | 导入配置（文件上传或 JSON），失败自动回滚 |
+| `GET` | `/api/config` | 查看当前运行时配置 |
+
+### 配置文件
+
+首次启动会从 `config/default.yaml` 自动生成 `config/config.yaml`。  
+可通过 `.env` 覆盖以下字段：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `APP_PORT` | Web 服务端口 | `8080` |
+| `NOVICE_MODE` | 傻瓜模式开关 | `true` |
+
+## 自动部署（GitHub Actions）
+
+在 GitHub 仓库 `Settings → Secrets and variables → Actions` 中添加以下 Secrets：
+
+| Secret | 说明 |
+|--------|------|
+| `DEPLOY_HOST` | 服务器 IP 或域名 |
+| `DEPLOY_USER` | SSH 用户名（如 `ubuntu`） |
+| `DEPLOY_PATH` | 服务器部署目录（如 `/opt/steam-friend-bot`） |
+| `DEPLOY_SSH_KEY` | SSH 私钥内容 |
+
+推送到 `main` 分支后，workflow 将：
+1. 运行 `pytest`
+2. 通过 rsync 同步代码到服务器
+3. 执行 `docker compose up -d --build`
+4. 轮询 `/healthz` 健康检查（最多 90 秒）
+5. 健康检查失败时自动回滚到上一版本
+
+### 服务器一次性准备
+
+```bash
+# 安装 Docker 和 Docker Compose
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin
+
+# 创建部署目录
+sudo mkdir -p /opt/steam-friend-bot
+sudo chown -R $USER:$USER /opt/steam-friend-bot
+
+# 把 CI 公钥加入授权
+echo "YOUR_PUBLIC_KEY" >> ~/.ssh/authorized_keys
+```
+
+## 运行测试
+
+```bash
+pip install -r requirements.txt
+pytest -q
+```
 
 ## 快速开始
 
