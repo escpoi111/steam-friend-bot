@@ -13,6 +13,7 @@ Steam 自动加好友程序 - 图形界面版
     pyinstaller --onefile --windowed --name SteamFriendBot steam_friend_bot_gui.py
 """
 
+import json
 import os
 import sys
 import threading
@@ -21,7 +22,11 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 import requests
 from typing import List, Set
-from steam_local_config import parse_cookies, resolve_steam_config
+from steam_local_config import (
+    DEFAULT_CONFIG_PATH,
+    parse_cookies,
+    resolve_steam_config,
+)
 
 
 # ==================== 核心逻辑 ====================
@@ -110,8 +115,8 @@ class SteamFriendBotGUI:
             row=2, column=1, sticky=tk.EW, pady=2, padx=(5, 0)
         )
 
-        # Cookies
-        ttk.Label(config_frame, text="Cookies:").grid(
+        # Cookies (steamLoginSecure value only)
+        ttk.Label(config_frame, text="steamLoginSecure:").grid(
             row=3, column=0, sticky=tk.W, pady=2
         )
         self.cookies_var = tk.StringVar()
@@ -120,7 +125,7 @@ class SteamFriendBotGUI:
         ).grid(row=3, column=1, sticky=tk.EW, pady=2, padx=(5, 0))
         ttk.Label(
             config_frame,
-            text="Cookies 中可只保留 steamLoginSecure，sessionid 会自动复用上方配置",
+            text="只需填写 steamLoginSecure 的值，无需带前缀；sessionid 自动复用上方配置",
         ).grid(row=4, column=1, sticky=tk.W, pady=(0, 4), padx=(5, 0))
 
         # 延迟
@@ -274,11 +279,15 @@ class SteamFriendBotGUI:
         self.exclude_text.delete("1.0", tk.END)
 
     def _get_config_overrides(self) -> dict:
+        cookies_value = self.cookies_var.get().strip()
+        # User only fills the value; auto-prepend key if needed
+        if cookies_value and "=" not in cookies_value:
+            cookies_value = f"steamLoginSecure={cookies_value}"
         return {
             "api_key": self.api_key_var.get().strip(),
             "steam_id": self.steam_id_var.get().strip(),
             "session_id": self.session_id_var.get().strip(),
-            "cookies": self.cookies_var.get().strip(),
+            "cookies": cookies_value,
             "add_delay_seconds": self.delay_var.get().strip(),
         }
 
@@ -310,7 +319,12 @@ class SteamFriendBotGUI:
         self.api_key_var.set(config.api_key)
         self.steam_id_var.set(config.steam_id)
         self.session_id_var.set(config.session_id)
-        self.cookies_var.set(config.cookies)
+        # Display only the steamLoginSecure value in the field
+        cookies_display = config.cookies
+        parsed = parse_cookies(cookies_display)
+        if "steamLoginSecure" in parsed:
+            cookies_display = parsed["steamLoginSecure"]
+        self.cookies_var.set(cookies_display)
         self.delay_var.set(config.add_delay_seconds)
         self.friend_codes_file = config.friend_codes_file
         self.exclude_file = config.exclude_file
@@ -351,7 +365,38 @@ class SteamFriendBotGUI:
             messagebox.showerror("错误", "\n".join(errors))
             return None
         self._apply_resolved_config(config, log_result=False, load_files=False)
+        self._save_local_config()
         return config
+
+    def _save_local_config(self):
+        """自动保存当前 GUI 配置到本地 JSON 文件。"""
+        config_path = os.getenv("STEAM_CONFIG_PATH", DEFAULT_CONFIG_PATH)
+        # Read existing config to preserve extra fields
+        existing = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+
+        cookies_value = self.cookies_var.get().strip()
+        # Save the full cookie string with prefix
+        if cookies_value and "=" not in cookies_value:
+            cookies_value = f"steamLoginSecure={cookies_value}"
+
+        existing["api_key"] = self.api_key_var.get().strip()
+        existing["steam_id"] = self.steam_id_var.get().strip()
+        existing["session_id"] = self.session_id_var.get().strip()
+        existing["cookies"] = cookies_value
+        existing["add_delay_seconds"] = int(self.delay_var.get().strip() or "5")
+
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            self._log(f"配置已自动保存到 {config_path}")
+        except OSError as e:
+            self._log(f"⚠️ 保存配置失败: {e}")
 
     def _get_codes_list(self) -> List[str]:
         """获取好友代码列表。"""
